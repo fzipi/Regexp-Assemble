@@ -8,7 +8,7 @@
 use strict;
 use Regexp::Assemble;
 
-eval qq{use Test::More tests => 142 };
+eval qq{use Test::More tests => 145 };
 if( $@ ) {
 	warn "# Test::More not available, no tests performed\n";
 	print "1..1\nok 1\n";
@@ -425,6 +425,35 @@ SKIP: {
 	$u->add(qw(d+ldrt d+ndrt d+ldt d+ndt d+x));
 	$str = $u->as_string;
 	is( $str, 'd+(?:[ln]dr?t|x)', 'visit ARRAY codepath' );
+}
+
+{
+ 	# force_escape_tokens: we embed the resulting regex within double quotes,
+ 	#                      so they all need to be escaped
+ 	my $ra = Regexp::Assemble->new(force_escape_tokens => q("));
+	my $str;
+
+	for my $test ( '[0-9]', '[0-9"\.%]', '[a-z"\$]' ) {
+		my $arr = $ra->lexstr($test);
+		$ra->insert($arr);
+	}
+	
+	$str = $ra->as_string;
+	is( $str, '(?:[0-9\"\.%]|[a-z\"\$]|[0-9])', 'duoble quotes should be escaped' );
+}
+
+{
+	# cook_hex: disable replacing hex escapes with decoded bytes
+	for my $test ( 
+		[ 0, qw(["'\x5c]), qw(["'\x5c]) ],
+		[ 1, qw(["'\x5c]), qw(["'\]) ])
+	{
+		my ($cook, $source, $result) = @$test;
+		my $ra = Regexp::Assemble->new(cook_hex => $cook);
+		my $arr = $ra->lexstr($source);
+		$ra->insert($arr);
+		is( $ra->as_string, $result, "cooked $cook");
+	}
 }
 
 cmp_ok( $_, 'eq', $fixed, '$_ has not been altered' );

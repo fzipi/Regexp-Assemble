@@ -25,7 +25,7 @@ $Single_Char   = qr/^(?:\\(?:[aefnrtdDwWsS]|c.|[^\w\/{|}-]|0\d{2}|x(?:[\da-fA-F]
 
 $Always_Fail = "^\\b\0";
 
-our $VERSION = '0.38';
+our $VERSION = '0.39';
 
 # ------------------------------------------------
 
@@ -72,9 +72,16 @@ sub new {
 		fold_meta_pairs
 		reduce
 		chomp
+		cook_hex
 	);
 
 	@args{qw(re str path)} = (undef, undef, []);
+
+	# Replace the string with an array ref
+	if (exists $args{force_escape_tokens}) {
+		my @fet = split '', $args{force_escape_tokens};
+		@args{force_escape_tokens} = \@fet;
+	}
 
 	$args{flags} ||= delete $args{modifiers} || '';
 	$args{lex}     = $Current_Lexer if defined $Current_Lexer;
@@ -129,7 +136,7 @@ sub _fastlex {
 
 	my $token;
 	my $qualifier;
-	$debug and print "# _lex <$record>\n";
+	$debug and print "# _fastlex <$record>\n";
 	my $modifier        = q{(?:[*+?]\\??|\\{(?:\\d+(?:,\d*)?|,\d+)\\}\\??)?};
 	my $class_matcher   = qr/\[(?:\[:[a-z]+:\]|\\?.)*?\]/;
 	my $paren_matcher   = qr/\(.*?(?<!\\)\)$modifier/;
@@ -329,7 +336,7 @@ sub _lex {
 					push @path, $1 eq 'l' ? lc($2) : uc($2);
 					goto NEXT_TOKEN;
 				}
-				elsif( $token =~ /^\\x([\da-fA-F]{2})$/ ) {
+				elsif( $self->{cook_hex} and $token =~ /^\\x([\da-fA-F]{2})$/ ) {
 					$token = quotemeta(chr(hex($1)));
 					$debug and print "#  cooked <$token>\n";
 					$token =~ s/^\\([^\w$()*+.?@\[\\\]^|{\/])$/$1/; # } balance
@@ -348,6 +355,14 @@ sub _lex {
 			# undo quotemeta's brute-force escapades
 			$qm and $token =~ s/^\\([^\w$()*+.?@\[\\\]^|{}\/])$/$1/;
 			$debug and print "#   <$token> case=<$case> qm=<$qm>\n";
+
+			foreach (@{$self->{force_escape_tokens}}) {
+				$debug and print "escaping token\n";
+				$token =~ s/([^\\])($_)/$1\\$2/;
+				$token =~ s/^($_)/\\$1/;
+				last;
+			}
+
 			push @path, $token;
 
 			NEXT_TOKEN:
@@ -792,6 +807,20 @@ sub unroll_plus {
 	return $self;
 }
 
+sub force_escape_tokens {
+	my $self = shift;
+	my $arrayref = [];
+	if (defined($_[0])) {
+		if (ref($_[0])) {
+			$arrayref = $_[0];
+		} else {
+			$arrayref = \$_[0];
+		}
+	}
+	$self->{force_escape_tokens} = $arrayref;
+	return $self;
+}
+
 sub lex {
 	my $self = shift;
 	$self->{lex} = qr($_[0]);
@@ -807,6 +836,12 @@ sub reduce {
 sub mutable {
 	my $self = shift;
 	$self->{mutable} = defined($_[0]) ? $_[0] : 1;
+	return $self;
+}
+
+sub cook_hex {
+	my $self = shift;
+	$self->{cook_hex} = defined($_[0]) ? $_[0] : 1;
 	return $self;
 }
 
@@ -2432,6 +2467,11 @@ B<unroll_plus>, controls whether to unroll, for example, C<x+> into
 C<x>, C<x*>, which may allow additional reductions in the
 resulting assembled pattern.
 
+B<force_escape_tokens>, specifies optional tokens that must always be
+escaped. This can be useful when you know that the resulting expression
+will be surrounded by quotes for instance.
+Note that this only works for _lex, not for _fastlex.
+
 B<reduce>, controls whether tail reduction occurs or not. If set,
 patterns like C<a(?:bc+d|ec+d)> will be reduced to C<a[be]c+d>.
 That is, the end of the pattern in each part of the b... and d...
@@ -2456,6 +2496,9 @@ This method/attribute will be removed in a future release. It doesn't
 really serve any purpose, and may be more effectively replaced by
 cloning an existing C<Regexp::Assemble> object and spinning out a
 pattern from that instead.
+
+B<cook_hex>, controls whether hexadecimal escape sequences, such as
+C<\x00>, should be replaced by the bytes they represent.
 
 =head2 source()
 
@@ -2886,6 +2929,13 @@ a pattern is broken up, C<a+> becomes C<a>, C<a*> (and
 C<b+?> becomes C<b>, C<b*?>. This may allow the freed C<a>
 to assemble with other patterns. Not enabled by default.
 
+=head2 force_escape_tokens(ARRAY REF)
+
+Specifies optional tokens that must always be
+escaped. This can be useful when you know that the resulting expression
+will be surrounded by quotes for instance.
+Note that this only works for _lex, not for _fastlex.
+
 =head2 lex(SCALAR)
 
 Change the pattern used to break a string apart into tokens.
@@ -2907,6 +2957,11 @@ that can consume a non-negligible amount of time).
 This method has been marked as DEPRECATED. It will be removed
 in a future release. See the C<clone> method for a technique
 to replace its functionality.
+
+=head2 cook_hex(0|1)
+Controls whether hexadecimal escape sequences, such as
+C<\x00>, should be replaced by the bytes they represent.
+On by default.
 
 =head2 reset()
 
